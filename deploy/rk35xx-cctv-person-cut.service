@@ -1,0 +1,28 @@
+[Unit]
+Description=RK35xx CCTV person video extraction (noncommercial)
+After=network.target
+
+[Service]
+Type=simple
+User=cctv-cut
+Group=cctv-cut
+SupplementaryGroups=video render
+WorkingDirectory=/opt/rk35xx-cctv-person-cut
+ExecStart=/opt/rk35xx-cctv-person-cut/.venv/bin/python -u server.py
+Environment=PERSON_CONFIG=/etc/rk35xx-cctv-person-cut.json
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=45
+LimitCORE=0
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/mnt/ssd/cctv-person-cut/work /mnt/archive
+# Add other output drives allowed by browse_roots here, e.g. -/media/archive.
+BindReadOnlyPaths=/mnt/recordings
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

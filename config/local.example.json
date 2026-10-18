@@ -1,0 +1,17 @@
+{
+  "work_dir": "../var/work",
+  "publish_dir": "../var/published",
+  "sources": {},
+  "model": "../models/person.rknn",
+  "decoder": "auto",
+  "bind": "127.0.0.1",
+  "port": 8423,
+  "storage": {
+    "policy": "local"
+  },
+  "browse_roots": [
+    "/mnt",
+    "/media",
+    "/srv"
+  ]
+}

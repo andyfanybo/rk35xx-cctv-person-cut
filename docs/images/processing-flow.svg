@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="330" viewBox="0 0 1200 330" role="img" aria-labelledby="title desc">
+<title id="title">RK35xx 监控视频处理流程</title><desc id="desc">原片保留，SSD分段，VPU解码，CPU准备画面，NPU识别人，原编码裁切合并，最终发布。</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#7688a6"/></marker></defs>
+<rect width="1200" height="330" rx="24" fill="#f3f6fb"/>
+<g font-family="sans-serif" text-anchor="middle"><text x="600" y="43" font-size="24" font-weight="bold" fill="#203350">把重复的视频整理，交给低功耗小设备</text>
+<g fill="white" stroke="#d4dfec" stroke-width="2"><rect x="30" y="90" width="170" height="115" rx="16"/><rect x="224" y="90" width="170" height="115" rx="16"/><rect x="418" y="90" width="170" height="115" rx="16"/><rect x="612" y="90" width="170" height="115" rx="16"/><rect x="806" y="90" width="170" height="115" rx="16"/><rect x="1000" y="90" width="170" height="115" rx="16"/></g>
+<g stroke="#7688a6" stroke-width="2" marker-end="url(#arrow)"><path d="M202 147H220"/><path d="M396 147H414"/><path d="M590 147H608"/><path d="M784 147H802"/><path d="M978 147H996"/></g>
+<g font-size="20" fill="#203350" font-weight="bold"><text x="115" y="132">监控录像</text><text x="309" y="132">SSD 分段</text><text x="503" y="132">VPU 解码</text><text x="697" y="132">NPU 识别</text><text x="891" y="132">无损裁切合并</text><text x="1085" y="132">保存成品</text></g>
+<g font-size="15" fill="#536984"><text x="115" y="168">原片始终保留</text><text x="309" y="168">逐段保存进度</text><text x="503" y="168">CPU 缩放与旋转</text><text x="697" y="168">稀疏判断是否有人</text><text x="891" y="168">stream copy</text><text x="1085" y="168">成功后清理缓存</text></g>
+<rect x="180" y="240" width="840" height="52" rx="26" fill="#e4edf9"/><text x="600" y="273" font-size="18" fill="#315b8c">单任务串行 · 硬件分工 · 允许宽松边界 · 不重新编码视频</text>
+</g></svg>

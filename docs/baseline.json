@@ -1,0 +1,24 @@
+{
+  "base_version": "person-turbo-v1.9.2",
+  "migration_date": "2026-10-18",
+  "source_file_sha256": {
+    "server.py": "b2f91ae91ef3b35a03effa35f70d4c62cdce0ef113dbe447837f5c55c1ce17ff",
+    "quick_pipeline.py": "7adcb9e8e9a70ef4bd7a08fd502e5308ec36eea0e969656852f802e3247d6d8f",
+    "turbo_scan.py": "2da092ba401ddb64acb51193fbe61f8438ca472c6dc74ff03a7f590a448ba390",
+    "detect.py": "16bcef2aeee98b7619ffe1d8216afc92406fb412639065a5be09273a7c1fba6d",
+    "rknn_native.py": "a1079db57f52ab2a20b99da4277cae8e97a9637e25ec0b01fec1d95b09c5a422",
+    "sampling.py": "d70249b5d173c1783981ff02bd6380c828e737d2fbc3043d976c33ac604be393",
+    "runtime_metrics.py": "7ecd1c97eb181a00eb7cd61a3cfb423b50c8fafd84c4b087b5adba63f0ebf275",
+    "state_io.py": "d36d61b7b9463a8a2b42a4277eae353e5ea60be1fe151aa3d112d7f62adc49f5",
+    "process_control.py": "df004df71a78e85232b0c34ff7342a91ea006d9409838a36fcd3c5b64cbcb2b6",
+    "publication.py": "d7f94b17ca0f0665c972b2c1f483f508765af92297fa813c3a8d8dad8c59b15d",
+    "storage_guard.py": "e75e4d5b562cdf8b6cdf20fdcf02f923e7db1244e0ee6b29d151a322bb56362c",
+    "cache_lifecycle.py": "4f3e7e4076af7ffb320ca88510ac251b7375d055beef2e2a13eb957ee6c5d93d",
+    "job_delete.py": "e1cd5457bda13f3d1b0b3b751ac00a3253f14cb3ad4560ab59afc64e9e36d481",
+    "recommendations.py": "2b2fae9aa2f102567a1618466b0b1274caa59455c29288e09518d6c460e1f096",
+    "task_stats.py": "45c7bd710a275ab3208040b5835f894c28bf79dede5bf9af8bb833d518b60eb0",
+    "mp4_keys.py": "7da830c7acfc0b3fe1a802772f9019295b31f82583db1c419e46996c3da69cb2",
+    "launch_quick_pipeline.py": "a00edd0df3e22da127175d6f982777de1980bad17bf6110ae055c4613581c503"
+  },
+  "note": "Code identities only; no video hashes or production jobs are included."
+}
