@@ -1,0 +1,12 @@
+diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc.c b/drivers/video/rockchip/mpp/mpp_rkvenc.c
+--- a/drivers/video/rockchip/mpp/mpp_rkvenc.c
++++ b/drivers/video/rockchip/mpp/mpp_rkvenc.c
+@@ -737,7 +737,7 @@ static int rkvenc_show_session_info(struct seq_file *seq, void *offset)
+ 	mutex_lock(&mpp->srv->session_lock);
+ 	list_for_each_entry_safe(session, n,
+ 				 &mpp->srv->session_list,
+-				 session_link) {
++				 service_link) {
+ 		if (session->device_type != MPP_DEVICE_RKVENC)
+ 			continue;
+ 		if (!session->priv)

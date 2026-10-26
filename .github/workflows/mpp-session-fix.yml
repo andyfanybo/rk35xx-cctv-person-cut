@@ -1,0 +1,84 @@
+name: MPP session list ARM64 compile
+
+on:
+  push:
+    branches: [fix/mpp-session-list-ci]
+    paths:
+      - .github/workflows/mpp-session-fix.yml
+      - kernel/mpp-session-list/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mpp-session-list-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  compile:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    env:
+      ARCH: arm64
+      CROSS_COMPILE: aarch64-linux-gnu-
+      KERNEL_REV: 4b382d7e3f500108b78e048281af56a4c507e3e1
+    steps:
+      - name: Checkout build recipe
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install cross compiler on the GitHub runner
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu build-essential bc bison flex libssl-dev libelf-dev
+
+      - name: Fetch the pinned Rockchip source
+        run: |
+          git init kernel-source
+          git -C kernel-source remote add origin https://github.com/rockchip-linux/kernel.git
+          git -C kernel-source fetch --depth=1 origin "$KERNEL_REV"
+          git -C kernel-source checkout --detach FETCH_HEAD
+          test "$(git -C kernel-source rev-parse HEAD)" = "$KERNEL_REV"
+
+      - name: Apply the session list fix
+        run: |
+          git -C kernel-source apply --check "$GITHUB_WORKSPACE/kernel/mpp-session-list/0001-fix-rkvenc-session-list.patch"
+          git -C kernel-source apply "$GITHUB_WORKSPACE/kernel/mpp-session-list/0001-fix-rkvenc-session-list.patch"
+          mkdir -p out
+          git -C kernel-source diff --check
+          git -C kernel-source diff > out/applied.patch
+
+      - name: Configure the upstream compile fixture
+        run: |
+          make -C kernel-source HOSTCFLAGS=-fcommon rockchip_linux_defconfig
+          kernel-source/scripts/config --file kernel-source/.config --enable ROCKCHIP_MPP_SERVICE --enable ROCKCHIP_MPP_PROC_FS --enable ROCKCHIP_MPP_RKVENC
+          make -C kernel-source HOSTCFLAGS=-fcommon olddefconfig
+          grep -qx CONFIG_ROCKCHIP_MPP_PROC_FS=y kernel-source/.config
+          cp kernel-source/.config out/build.config
+          aarch64-linux-gnu-gcc --version > out/compiler.txt
+
+      - name: Compile the patched built-in driver object
+        run: |
+          make -C kernel-source HOSTCFLAGS=-fcommon -j2 drivers/video/rockchip/mpp/mpp_rkvenc.o 2>&1 | tee out/build.log
+          object=kernel-source/drivers/video/rockchip/mpp/mpp_rkvenc.o
+          aarch64-linux-gnu-readelf -h "$object" | tee out/elf-header.txt
+          grep -q AArch64 out/elf-header.txt
+          aarch64-linux-gnu-nm "$object" > out/symbols.txt
+          grep -q rkvenc_show_session_info out/symbols.txt
+          cp "$object" out/
+          cp kernel-source/drivers/video/rockchip/mpp/mpp_rkvenc.c out/patched-mpp_rkvenc.c
+          printf '%s\n' "$KERNEL_REV" > out/kernel-source-revision.txt
+          printf '%s\n' 'Compile validation only. This object is built-in kernel code, not a loadable module or a NAS boot image. It must not be installed directly.' > out/ARTIFACT-SCOPE.txt
+          cd out
+          sha256sum mpp_rkvenc.o patched-mpp_rkvenc.c build.config applied.patch > SHA256SUMS
+
+      - name: Upload compiler evidence and artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mpp-session-list-arm64-${{ github.run_id }}
+          path: out/
+          if-no-files-found: warn
+          retention-days: 14
