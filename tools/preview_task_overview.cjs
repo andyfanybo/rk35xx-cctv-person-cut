@@ -23,6 +23,7 @@ const assert=require('node:assert/strict');
   await page.screenshot({path:'ui-preview/desktop.png',fullPage:false});
   await page.setViewportSize({width:390,height:844});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
+  assert.equal(await page.locator('.timeline-table-wrap').evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
   await page.screenshot({path:'ui-preview/mobile.png',fullPage:false});
   await browser.close();
   console.log('Browser checks passed: filters, pagination, text-only intervals, desktop and mobile.');
