@@ -23,3 +23,4 @@ class TaskStatsTests(unittest.TestCase):
     def test_clamps_to_source(self):
         self.row.update(analyzed_seconds=200,candidate_intervals=[[0,200]]);s=self.stats();self.assertEqual(s['analyzed_seconds'],100);self.assertEqual(s['people_candidate_seconds'],100)
 if __name__=='__main__':unittest.main()
+

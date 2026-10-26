@@ -1,3 +1,4 @@
+from task_overview import build_timelines
 """Task totals with explicit analysis scope and byte estimates from real candidates."""
 
 def union_seconds(intervals,start,end):
@@ -38,7 +39,7 @@ def summarize(plan,results,reviews,metadata,exports=None):
     kept=[c for c in clips if reviews.get(c['path'],{}).get('decision')=='keep']
     current=[c['path'] for c in kept]
     final=next((e for e in reversed(exports or []) if e.get('state')=='done' and e.get('selected_clips')==current),None)
-    return {'source_total_duration_seconds':total_time if total_known else None,
+    return {'timelines':build_timelines(plan,results,metadata),'source_total_duration_seconds':total_time if total_known else None,
         'source_total_bytes':total_size if size_known else None,'analyzed_seconds':analyzed,
         'people_candidate_seconds':people,'no_person_detected_seconds':max(0,analyzed-people),
         'unanalyzed_seconds':max(0,total_time-analyzed) if total_known else None,
@@ -47,3 +48,4 @@ def summarize(plan,results,reviews,metadata,exports=None):
         'merged_actual_bytes':final.get('size') if final else None,'complete':complete,
         'estimate_method':'已生成候选文件实际大小合计，最终合并封装大小可能略有变化；不按时长比例推算',
         'scope':'有人=候选保留区间，含前后缓冲与关键帧扩展；无人=已分析区间中未检出而排除的部分；未分析不算无人'}
+

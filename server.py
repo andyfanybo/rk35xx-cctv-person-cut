@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote,quote
 from recommendations import recommendation,apply_default
 from task_stats import summarize
+from task_overview import begin_processing,runtime_summary
 from sampling import validate_interval
 from cache_lifecycle import PUBLISH_ROOT,delivered_file,cleanup_automatic
 from job_delete import delete_task
@@ -38,7 +39,9 @@ def atomic(path,obj):atomic_json(path,obj)
 def save(job):atomic(DATA/'jobs'/job['id']/'job.json',job)
 
 def update(job,**fields):
-    job.update(fields);job['updated']=time.time();save(job)
+    job.update(fields);job['updated']=time.time()
+    if fields.get('state') in ('failed','cancelled','interrupted','cancelling'):job['processing_stopped_at']=job['updated']
+    save(job)
 
 def within(path,root):return path==root or root in path.parents
 
@@ -98,6 +101,7 @@ def public(job,detail=False):
                 except ValueError:pass
         metadata=json.loads((folder/'input-metadata.json').read_text()) if (folder/'input-metadata.json').exists() else job.get('input_metadata',[])
         result['statistics']=summarize(job['plan'],statistics,result['reviews'],metadata,result['exports'])
+        result['runtime']=runtime_summary(job,result['exports'],DATA/'jobs'/job['id'],progress=result.get('progress'))
         result['verification']=job.get('verification','full')
         result['sample_interval_seconds']=job.get('sample_interval_seconds',1)
     return result
@@ -149,11 +153,13 @@ def worker():
                 if job:
                     folder=DATA/'jobs'/job['id']
                     if export:
+                        begin_processing(job,folder)
                         export['state']='running';save(job)
                         args=[sys.executable,'-u',str(HERE/'merge_export.py'),'--job',str(folder/'job.json'),'--export-id',export['id']]
                         if export['publish_user']:args+=['--publish']
                         logfile=folder/'exports'/export['id']/'worker.log'
                     else:
+                        begin_processing(job,folder)
                         update(job,state='running',message='正在启动识别任务')
                         args=[sys.executable,'-u',str(HERE/'launch_quick_pipeline.py'),'--job',str(folder/'job.json')]
                         logfile=folder/'worker.log'
@@ -181,18 +187,20 @@ def worker():
                 elif export:
                     receipt=read_json(status_path,{}) or {}
                     export['state']='done' if code==0 or receipt.get('state')=='done' else 'failed'
+                    job['processing_finished_at' if export['state']=='done' else 'processing_stopped_at']=time.time()
                     if export['state']=='failed':
                         export['message']=watchdog_reason or receipt.get('message','合并发布中断，可重新合并');atomic(status_path,dict(receipt,state='failed',message=export['message'],updated=time.time()))
                     save(job)
                 elif job['state']=='cancelling' or code==130:update(job,state='cancelled',message='任务已取消；可恢复')
                 elif stop.is_set():update(job,state='interrupted',message='服务停止；可恢复')
                 elif code==0:
+                    if job.get('output_mode')!='automatic':job['processing_finished_at']=time.time()
                     update(job,state='done',message='识别完成，正在准备成品' if job.get('output_mode')=='automatic' else '候选已生成；可按默认建议执行')
                     if job.get('review_mode')=='recommended':
                         recommend_job(job)
                         if job.get('output_mode')=='automatic' and not any(r['clips'] for r in public(job,True)['results']):
                             cleanup_automatic(DATA/'jobs'/job['id']/'job.json',no_people=True)
-                            update(job,message='识别完成：未检出有人，不生成空视频，临时缓存已释放')
+                            update(job,processing_finished_at=time.time(),message='识别完成：未检出有人，不生成空视频，临时缓存已释放')
                         else:
                             try:queue_export(job,job.get('publish_user',True))
                             except ValueError as e:update(job,message=str(e))
@@ -204,7 +212,7 @@ def worker():
             print('任务处理错误：'+str(e),flush=True)
             if job:
                 with lock:
-                    if export:export['state']='failed';export['message']=str(e);save(job)
+                    if export:export['state']='failed';export['message']=str(e);job['processing_stopped_at']=time.time();save(job)
                     else:update(job,state='failed',message=str(e))
             if job is None:stop.wait(5)
         finally:
@@ -293,7 +301,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not any(c['path']==str(p.relative_to(root)) for c in summaries):raise ValueError('候选尚未完成校验')
             return self.file(p,head)
         if path=='/':return self.file(HERE/'web/index.html',head)
-        if path in ('/app.js','/style.css'):return self.file(HERE/'web'/path[1:],head)
+        if path in ('/app.js','/task-overview.js','/style.css'):return self.file(HERE/'web'/path[1:],head)
         raise FileNotFoundError('页面不存在')
     def file(self,p,head=False,download_name=None):
         size=p.stat().st_size;start=0;end=size-1;status=200
@@ -482,3 +490,4 @@ def main():
     finally:http.server_close();thread.join(timeout=30)
 
 if __name__=='__main__':main()
+
