@@ -16,7 +16,7 @@ def wait_worker(proc,job,export,stop,status_path,grace=15,stall=900):
     last=time.monotonic();last_check=0.;signature=None;term_at=None;reason=None
     while proc.poll() is None:
         now=time.monotonic()
-        cancelling=stop.is_set() or job.get('delete_requested') or job.get('state')=='cancelling'
+        cancelling=stop.is_set() or job.get('pause_requested') or (export or {}).get('pause_requested') or job.get('delete_requested') or job.get('state')=='cancelling'
         if now-last_check>=min(5,max(.05,stall/4)):
             row=read_json(status_path,{}) or {};last_check=now
             if not isinstance(row,dict):row={}
@@ -28,3 +28,4 @@ def wait_worker(proc,job,export,stop,status_path,grace=15,stall=900):
         try:proc.wait(timeout=min(.5,max(.05,grace/4)))
         except subprocess.TimeoutExpired:pass
     return proc.returncode,reason
+

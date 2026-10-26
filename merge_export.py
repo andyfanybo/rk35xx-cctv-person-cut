@@ -1,5 +1,7 @@
 """Stream-copy export entry point for the portable quick engine."""
 import argparse
+import signal
+from pipeline import Cancelled
 from pathlib import Path
 from configuration import settings
 from quick_pipeline import merge
@@ -18,4 +20,8 @@ if __name__ == '__main__':
     ap.add_argument('--export-id', required=True)
     ap.add_argument('--publish', action='store_true')
     args = ap.parse_args()
-    run(args.job, args.export_id, args.publish)
+    def pause(signum,frame):raise Cancelled('合并已暂停，原片与候选保留')
+    signal.signal(signal.SIGTERM,pause);signal.signal(signal.SIGINT,pause)
+    try:run(args.job,args.export_id,args.publish)
+    except Cancelled:raise SystemExit(130)
+

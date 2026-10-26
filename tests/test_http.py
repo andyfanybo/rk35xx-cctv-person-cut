@@ -79,5 +79,54 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.get('/api/jobs'),[])
 
 
+    def completed_failed_export(self):
+        from state_io import atomic_json
+        with patch.object(server.shutil,'disk_usage') as usage:
+            usage.return_value.free=10*1024**3
+            created=self.post('/api/jobs',{'sources':[str(self.source/'camera.mp4')],'output_mode':'automatic'})
+        job=server.jobs[created['id']];job['state']='done'
+        folder=self.data/'jobs'/job['id'];root=Path(job['output']);part=root/'sample-01';part.mkdir(parents=True)
+        clip=part/'kept-0000-0000.mp4';clip.write_bytes(b'video')
+        row={'label':'sample-01','source':str(self.source/'camera.mp4'),'clips':[{'path':'sample-01/kept-0000-0000.mp4','size':5,'requested_start':0,'requested_end':10,'actual_duration':10,'processing_policy':'quick'}],'candidate_intervals':[[0,10]],'analyzed_seconds':10,'source_duration_seconds':10,'candidates_complete':True}
+        atomic_json(root/'summary.json',[row]);atomic_json(folder/'reviews.json',{'sample-01/kept-0000-0000.mp4':{'decision':'keep'}})
+        export={'id':'b'*32,'state':'failed','publish_user':False};job['exports']=[export];job['publish_user']=False
+        out=folder/'exports'/export['id'];out.mkdir(parents=True)
+        atomic_json(out/'selection.json',{});atomic_json(out/'status.json',{'state':'failed','message':'处理盘空间不足'})
+        server.save(job)
+        return job,clip
+
+    def test_manual_merge_rechecks_space_without_rescanning_or_duplicate_export(self):
+        import merge_recovery
+        job,clip=self.completed_failed_export();path='/api/jobs/'+job['id']+'/merge'
+        with patch.object(merge_recovery.shutil,'disk_usage') as usage:
+            usage.return_value.free=0
+            with self.assertRaises(HTTPError):self.post(path,{'publish_user':False})
+            self.assertEqual(job['exports'][0]['state'],'failed');self.assertTrue(clip.exists())
+            usage.return_value.free=10*1024**3
+            self.post(path,{'publish_user':False});self.post(path,{'publish_user':False})
+        self.assertEqual(job['state'],'done');self.assertEqual(len(job['exports']),1)
+        self.assertEqual(job['exports'][0]['state'],'queued');self.assertTrue(clip.exists())
+
+    def test_pause_and_resume_export_keep_completed_recognition(self):
+        job,clip=self.completed_failed_export();job['exports'][0]['state']='queued'
+        result=self.post('/api/jobs/'+job['id']+'/pause',{})
+        self.assertEqual(result['exports'][0]['state'],'paused');self.assertEqual(result['state'],'done')
+        with patch.object(server.shutil,'disk_usage') as usage:
+            usage.return_value.free=10*1024**3
+            self.post('/api/jobs/'+job['id']+'/resume',{})
+        self.assertEqual(job['state'],'done');self.assertEqual(job['exports'][0]['state'],'queued');self.assertTrue(clip.exists())
+
+    def test_pause_keeps_cache_and_delete_removes_it_without_source(self):
+        with patch.object(server.shutil,'disk_usage') as usage:
+            usage.return_value.free=10*1024**3
+            created=self.post('/api/jobs',{'sources':[str(self.source/'camera.mp4')],'output_mode':'automatic'})
+        folder=self.data/'jobs'/created['id'];cache=folder/'checkpoint.json';cache.write_text('{}')
+        result=self.post('/api/jobs/'+created['id']+'/pause',{})
+        self.assertEqual(result['state'],'paused');self.assertTrue(cache.exists())
+        result=self.post('/api/jobs/'+created['id']+'/delete',{'confirm':True})
+        self.assertTrue(result['deleted']);self.assertFalse(folder.exists());self.assertTrue((self.source/'camera.mp4').exists())
+
+
 if __name__=='__main__':
     unittest.main()
+

@@ -3,6 +3,7 @@
 import argparse
 import sys
 from configuration import settings
+from directory_selection import target_root
 from directory_selection import listing,selectable,select_pair,browse_roots
 import fcntl
 import json
@@ -20,6 +21,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote,quote
 from recommendations import recommendation,apply_default
 from task_stats import summarize
+from merge_recovery import merge_space,require_space
+from task_control import pause_job,finish_export,RECOVERABLE_EXPORTS
 from task_overview import begin_processing,runtime_summary
 from sampling import validate_interval
 from cache_lifecycle import PUBLISH_ROOT,delivered_file,cleanup_automatic
@@ -40,7 +43,7 @@ def save(job):atomic(DATA/'jobs'/job['id']/'job.json',job)
 
 def update(job,**fields):
     job.update(fields);job['updated']=time.time()
-    if fields.get('state') in ('failed','cancelled','interrupted','cancelling'):job['processing_stopped_at']=job['updated']
+    if fields.get('state') in ('failed','cancelled','paused','interrupted','cancelling'):job['processing_stopped_at']=job['updated']
     save(job)
 
 def within(path,root):return path==root or root in path.parents
@@ -80,7 +83,7 @@ def public(job,detail=False):
                 except (OSError,RuntimeError,ValueError):recovered=None
                 if recovered:receipt=recovered;item.update(recovered)
                 else:item.update(state='failed',message='导出回执不可用，可重新合并发布')
-            if export.get('state') in ('failed','cancelled') and receipt.get('state')!='done':
+            if export.get('state') in ('failed','cancelled','paused','pausing','interrupted') and receipt.get('state')!='done':
                 item['state']=export['state'];item['message']=export.get('message','导出中断，可重新合并发布')
         result['exports'].append(item)
     result['cache_cleanup']=read_json(DATA/'jobs'/job['id']/'cache-cleanup.json',{},recover=True,isolate=True) or {}
@@ -101,6 +104,10 @@ def public(job,detail=False):
                 except ValueError:pass
         metadata=json.loads((folder/'input-metadata.json').read_text()) if (folder/'input-metadata.json').exists() else job.get('input_metadata',[])
         result['statistics']=summarize(job['plan'],statistics,result['reviews'],metadata,result['exports'])
+        last=result['exports'][-1] if result['exports'] else None
+        if job['state']=='done' and last and last.get('state') in RECOVERABLE_EXPORTS:
+            clips=[c for row in result['results'] for c in row['clips']]
+            result['merge_recovery']=merge_space(clips,folder,DATA/'jobs'/job['id']/'exports'/last['id'],target_root(job,PUBLISH_ROOT),last.get('publish_user',job.get('publish_user',True)))
         result['runtime']=runtime_summary(job,result['exports'],DATA/'jobs'/job['id'],progress=result.get('progress'))
         result['verification']=job.get('verification','full')
         result['sample_interval_seconds']=job.get('sample_interval_seconds',1)
@@ -115,15 +122,18 @@ def recommend_job(job):
 def queue_export(job,publish):
     if job['state']!='done':raise ValueError('识别完成后才能合并')
     if job.get('cleanup_in_progress'):raise ValueError('正在释放SSD缓存，请稍后查看成品')
-    if public(job).get('cache_videos_removed'):raise ValueError('SSD候选视频已释放；如需重新裁切，请新建识别任务')
-    existing=next((e for e in job.get('exports',[]) if e['state'] in ('queued','running')),None)
+    existing=next((e for e in job.get('exports',[]) if e['state'] in ('queued','running','pausing')),None)
     if existing:return existing
+    if job['id'] in processes:raise ValueError('任务仍在暂停，请稍后继续')
     info=public(job,True);clips=[c for r in info['results'] for c in r['clips']]
+    if info.get('cache_videos_removed') and not info.get('merge_recovery',{}).get('merged_ready'):raise ValueError('SSD候选视频已释放；如需重新裁切，请新建识别任务')
+    if info.get('merge_recovery'):require_space(info['merge_recovery'])
     if any(info['reviews'].get(c['path'],{}).get('decision','pending')=='pending' for c in clips):raise ValueError('还有待确认候选，请先按建议执行或保存判断')
     if not any(info['reviews'].get(c['path'],{}).get('decision')=='keep' for c in clips):raise ValueError('没有保留候选，不生成空视频')
-    if job.get('verification')=='quick' and job.get('exports') and job['exports'][-1].get('state')=='failed':
+    if job.get('verification')=='quick' and job.get('exports') and job['exports'][-1].get('state') in RECOVERABLE_EXPORTS:
         export=job['exports'][-1];export.update(state='queued',publish_user=publish);export.pop('message',None)
-        atomic(DATA/'jobs'/job['id']/'exports'/export['id']/'status.json',{'state':'queued','message':'等待重新合并发布','updated':time.time()})
+        export.pop('pause_requested',None);job.pop('pause_requested',None)
+        atomic(DATA/'jobs'/job['id']/'exports'/export['id']/'status.json',{'state':'queued','message':'等待继续合并发布','updated':time.time()})
         job['publish_user']=publish;save(job);wake.set();return export
     export={'id':uuid.uuid4().hex,'state':'queued','publish_user':publish,'created':time.time()}
     folder=DATA/'jobs'/job['id']/'exports'/export['id'];folder.mkdir(parents=True)
@@ -143,6 +153,7 @@ def worker():
                 if job is None:
                     for candidate in jobs.values():
                         if candidate['state']!='done' or candidate.get('cleanup_retry_after',0)>time.time():continue
+                        if candidate.get('exports') and candidate['exports'][-1].get('state') in RECOVERABLE_EXPORTS+('pausing',):continue
                         if cleanup_checks.get(candidate['id'],0)>time.monotonic():continue
                         cleanup_checks[candidate['id']]=time.monotonic()+60
                         info=public(candidate)
@@ -186,12 +197,10 @@ def worker():
                     update(job,state='cancelled',message='正在删除任务和缓存')
                 elif export:
                     receipt=read_json(status_path,{}) or {}
-                    export['state']='done' if code==0 or receipt.get('state')=='done' else 'failed'
-                    job['processing_finished_at' if export['state']=='done' else 'processing_stopped_at']=time.time()
-                    if export['state']=='failed':
-                        export['message']=watchdog_reason or receipt.get('message','合并发布中断，可重新合并');atomic(status_path,dict(receipt,state='failed',message=export['message'],updated=time.time()))
+                    receipt=finish_export(job,export,receipt,code,watchdog_reason)
+                    if export['state']!='done':atomic(status_path,receipt)
                     save(job)
-                elif job['state']=='cancelling' or code==130:update(job,state='cancelled',message='任务已取消；可恢复')
+                elif job['state']=='cancelling' or code==130:update(job,state='paused' if job.pop('pause_requested',False) else 'cancelled',message='任务已暂停；进度保留，可继续处理')
                 elif stop.is_set():update(job,state='interrupted',message='服务停止；可恢复')
                 elif code==0:
                     if job.get('output_mode')!='automatic':job['processing_finished_at']=time.time()
@@ -301,7 +310,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not any(c['path']==str(p.relative_to(root)) for c in summaries):raise ValueError('候选尚未完成校验')
             return self.file(p,head)
         if path=='/':return self.file(HERE/'web/index.html',head)
-        if path in ('/app.js','/task-overview.js','/style.css'):return self.file(HERE/'web'/path[1:],head)
+        if path in ('/app.js','/task-overview.js','/task-controls.js','/style.css'):return self.file(HERE/'web'/path[1:],head)
         raise FileNotFoundError('页面不存在')
     def file(self,p,head=False,download_name=None):
         size=p.stat().st_size;start=0;end=size-1;status=200
@@ -376,7 +385,7 @@ class Handler(BaseHTTPRequestHandler):
                          'output_mode':output_mode,'segment_minutes':segment_minutes,'detection_profile':profile,'night_relaxed':night,'av_sync_policy':'same-cut-times-approximate'}
                     if input_dir:job.update(input_directory=str(input_dir),publish_dir=str(output_dir),publish_storage=publish_storage)
                     jobs[ident]=job;save(job);wake.set();return self.json(public(job),201)
-                match=re.fullmatch(r'/api/jobs/([a-f0-9]{32})/(cancel|resume|review|recommend|merge|delete)',path)
+                match=re.fullmatch(r'/api/jobs/([a-f0-9]{32})/(pause|cancel|resume|review|recommend|merge|delete)',path)
                 if not match:raise ValueError('接口不存在')
                 job=jobs[match[1]];action=match[2]
                 if action=='delete':
@@ -389,7 +398,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.json({'deleting':True,'id':job['id']})
                     result=delete_task(DATA,job,[v for k,v in jobs.items() if k!=job['id']]);jobs.pop(job['id'])
                     return self.json(result)
-                if job.get('imported') and action in ('cancel','resume'):raise ValueError('导入结果不包含可控制的后台进程')
+                if job.get('imported') and action in ('pause','cancel','resume'):raise ValueError('导入结果不包含可控制的后台进程')
                 if action=='recommend':
                     if job['state']!='done':raise ValueError('识别完成后才能按建议执行')
                     merge=body.get('merge',False);publish=body.get('publish_user',True)
@@ -403,18 +412,17 @@ class Handler(BaseHTTPRequestHandler):
                     publish=body.get('publish_user',True)
                     if type(publish) is not bool:raise ValueError('发布参数无效')
                     queue_export(job,publish)
-                elif action=='cancel':
-                    if job['state']=='queued':update(job,state='cancelled',message='排队任务已取消')
-                    elif job['state']=='running':
-                        update(job,state='cancelling',message='正在停止；保留扫描记录')
-                        proc=processes.get(job['id'])
-                        if proc and proc.poll() is None:signal_group(proc,signal.SIGTERM)
-                    else:raise ValueError('当前任务不能取消')
+                elif action in ('pause','cancel'):
+                    pause_job(job,DATA/'jobs'/job['id'],processes.get(job['id']),lambda proc:signal_group(proc,signal.SIGTERM),save,legacy=action=='cancel')
                 elif action=='resume':
-                    if job['state'] not in ('failed','cancelled','interrupted'):raise ValueError('当前任务不能恢复')
-                    if job['id'] in processes:raise ValueError('任务仍在停止')
+                    if job['id'] in processes:raise ValueError('任务仍在暂停，请稍后继续')
                     if job.get('imported'):raise ValueError('导入结果不可恢复')
-                    update(job,state='queued',message='等待恢复');wake.set()
+                    if job['state']=='done' and job.get('exports') and job['exports'][-1].get('state') in RECOVERABLE_EXPORTS:
+                        queue_export(job,job.get('publish_user',True))
+                    else:
+                        if job['state'] not in ('failed','cancelled','paused','interrupted'):raise ValueError('当前任务不能继续')
+                        job.pop('pause_requested',None)
+                        update(job,state='queued',message='等待继续处理');wake.set()
                 else:
                     clip=body.get('clip');decision=body.get('decision')
                     result=public(job,True)
@@ -446,6 +454,10 @@ def load_jobs():
             for export in j.get('exports',[]):
                 status=DATA/'jobs'/ident/'exports'/export['id']/'status.json'
                 receipt=read_json(status,{},recover=True,isolate=True) or {}
+                if export.get('state')=='pausing':
+                    export.update(state='paused',message='合并已暂停；识别片段保留')
+                    atomic(status,dict(receipt,state='paused',message=export['message'],updated=time.time()))
+                    continue
                 if export.get('state')=='running' or export.get('state')=='done' and receipt.get('state')!='done' or receipt.get('state') in ('running','preparing','merging','verifying','publishing','copy-verifying'):
                     try:recovered=recover_publication(status.parent,j) if j.get('verification')=='quick' else None
                     except (OSError,RuntimeError,ValueError) as error:

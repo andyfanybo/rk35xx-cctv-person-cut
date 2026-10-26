@@ -46,3 +46,4 @@ def delete_task(data,job,other_jobs):
     if monitoring.exists():shutil.rmtree(str(monitoring))
     return {'deleted':True,'id':ident,'shared_cache_retained':shared,'nas_partials_removed':partials_removed,'partial_cleanup_error':partial_cleanup_error,
             'message':'任务和私有缓存已删除；原录像与用户目录成品保留'}
+

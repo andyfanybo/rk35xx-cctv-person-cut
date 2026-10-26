@@ -16,7 +16,7 @@ jobs:
       - run: bash -n install.sh
       - run: node --check web/app.js
       - run: node --check web/task-overview.js
-      - run: node --test tests/task_overview_ui.cjs
+      - run: node --test tests/task_overview_ui.cjs tests/task_controls_ui.cjs
       - run: python tools/check_release.py
 
 
@@ -28,6 +28,7 @@ jobs:
       - run: npm install --no-save --package-lock=false playwright@1.64.1
       - run: npx playwright install --with-deps chromium
       - run: node tools/preview_task_overview.cjs
+      - run: node tools/preview_task_recovery.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: task-overview-preview

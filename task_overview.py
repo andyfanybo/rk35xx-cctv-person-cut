@@ -48,8 +48,8 @@ def runtime_summary(job,exports=None,folder=None,now=None,progress=None):
         start=legacy_started(str(Path(folder)/'worker.log'));estimated=start is not None
     exports=list(exports or []);last=exports[-1] if exports else {}
     end=number(job.get('processing_finished_at'))
-    active=any(e.get('state') in ('queued','running','preparing','merging','verifying','publishing','copy-verifying') for e in exports)
-    paused=job.get('state') in ('failed','cancelled','interrupted','cancelling') or last.get('state') in ('failed','cancelled','interrupted')
+    active=any(e.get('state') in ('queued','running','preparing','merging','verifying','publishing','copy-verifying','pausing') for e in exports)
+    paused=job.get('state') in ('failed','cancelled','paused','interrupted','cancelling') or last.get('state') in ('failed','cancelled','paused','pausing','interrupted')
     complete=not active and not paused and (end is not None or (job.get('state')=='done' and (not exports or last.get('state')=='done')))
     state='done' if complete else 'paused' if paused else 'running' if start is not None else 'queued'
     if complete and end is None:

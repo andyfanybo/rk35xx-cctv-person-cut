@@ -8,6 +8,7 @@ import pipeline as core
 from sampling import candidate_intervals
 from runtime_metrics import media_command,copy_progress
 from mp4_keys import movie_duration
+from merge_recovery import merge_space,require_space,failure_receipt
 from state_io import read_json,quarantine,load_results
 from storage_guard import ensure_publish_storage
 from publication import publish as publish_file,recover as recover_publication,find_recovered,publish_tag
@@ -222,7 +223,7 @@ def cleanup_delivered(job_path,receipt):
     atomic_json(job_path.parent/'cache-cleanup.json',{'state':'cleaning','delivery':'published','videos_removed':False,'artifacts_removed':False,'published':str(final),'size':receipt['size'],'delivery_check':'copy-size','processing_policy':'quick','export_id':receipt.get('export_id'),'publish_root':receipt.get('publish_root'),'publish_storage':receipt.get('publish_storage')})
     return cleanup_automatic(job_path)
 
-def merge(job_path,export_id,publish):
+def _merge(job_path,export_id,publish):
     job_path=Path(job_path).resolve();job=read_json(job_path,None,recover=True);root=Path(job['output']).resolve();folder=job_path.parent;out=folder/'exports'/export_id;out.mkdir(parents=True,exist_ok=True)
     def progress(**kw):kw.update(updated=time.time());core.atomic(out/'status.json',kw);print(json.dumps(kw,ensure_ascii=False),flush=True)
     def finish(receipt):
@@ -243,6 +244,7 @@ def merge(job_path,export_id,publish):
         if (target_root(job,PUBLISH_ROOT)/published_name(job)).exists():raise ValueError('已有同名成品，拒绝覆盖或仅凭大小认领')
     rows=load_results(root);clips=[c for row in rows for c in row['clips']]
     if not clips:raise ValueError('未检出有人，不生成空视频')
+    require_space(merge_space(clips,root,out,target_root(job,PUBLISH_ROOT),publish))
     target=out/'merged.mp4';temp=out/'merged.partial.mp4';ready=read_json(out/'merge-ready.json',None,recover=True,isolate=True)
     if not (ready and ready.get('selected_clips')==[c['path'] for c in clips] and target.is_file() and target.stat().st_size==ready.get('size')):
         paths=[];lines=[]
@@ -254,7 +256,7 @@ def merge(job_path,export_id,publish):
                 span=clip_offset(clips[i+1])-clip_offset(c)
                 if span>0:lines.append('duration {:.9f}\n'.format(span))
         needed=sum(p.stat().st_size for p in paths)+1024**3
-        if shutil.disk_usage(str(out)).free<needed:raise ValueError('SSD合并空间不足')
+        if shutil.disk_usage(str(out)).free<needed:require_space(merge_space(clips,root,out,target_root(job,PUBLISH_ROOT),publish))
         listing=out/'concat.txt';listing.write_text(''.join(lines))
         if temp.exists():temp.unlink()
         media_command([core.FF,'-v','error','-nostdin','-f','concat','-safe','0','-i',str(listing),'-map','0','-c','copy','-metadata','comment='+publish_tag(job,export_id),'-avoid_negative_ts','make_zero','-n',str(temp)],
@@ -264,13 +266,24 @@ def merge(job_path,export_id,publish):
         core.atomic(out/'merge-ready.json',ready)
     receipt=dict(ready)
     if publish:
-        if shutil.disk_usage(str(target_root(job,PUBLISH_ROOT))).free<receipt['size']+1024**3:raise ValueError('成品目录空间不足')
+        require_space(merge_space(clips,root,out,target_root(job,PUBLISH_ROOT),publish))
         receipt=publish_file(out,job,target,receipt,lambda src,dst:copy_progress(src,dst,lambda **kw:progress(state='publishing',message='保存最终视频',**kw)))
     return finish(receipt)
 
+def merge(job_path,export_id,publish):
+    try:return _merge(job_path,export_id,publish)
+    except Exception as error:
+        out=Path(job_path).parent/'exports'/export_id;out.mkdir(parents=True,exist_ok=True)
+        receipt=read_json(out/'status.json',{}) or {}
+        if receipt.get('state')=='done':return receipt
+        failed=failure_receipt(error)
+        if isinstance(error,core.Cancelled):failed.update(state='paused',message='合并已暂停；已识别片段保留')
+        core.atomic(out/'status.json',dict(receipt,**failed,updated=time.time()))
+        raise
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('--job',required=True);a=p.parse_args()
-    def stop(s,f):raise core.Cancelled('任务已停止，已完成分段和识别记录保留')
+    def stop(s,f):raise core.Cancelled('任务已暂停，已完成分段和识别记录保留')
     signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
     try:run(a.job)
     except BaseException as e:
@@ -279,3 +292,4 @@ def main():
         if isinstance(e,core.Cancelled):return 130
         raise
     return 0
+
