@@ -27,6 +27,7 @@ const server=http.createServer((req,res)=>{
   assert.equal(await page.locator('#jobs').isVisible(),false);
   assert.ok((await page.locator('#detail').boundingBox()).y<170);
   const recovery=await page.locator('.merge-recovery').boundingBox();assert.ok(recovery.y<500);
+  assert.doesNotMatch(await page.locator('.progress-panel').textContent(),/任务已完成/);
   fs.mkdirSync('ui-preview',{recursive:true});await page.screenshot({path:'ui-preview/mobile-task-recovery.png'});
   await page.getByRole('button',{name:'继续合并',exact:true}).click();await page.waitForTimeout(150);
   assert.deepEqual(calls,['merge']);
