@@ -33,6 +33,7 @@ const server=http.createServer((req,res)=>{
   assert.deepEqual(calls,['merge']);
   await page.getByRole('button',{name:'切换任务',exact:true}).click();assert.equal(await page.locator('#jobs').isVisible(),true);
   await page.locator('[data-job="'+jobs[1].id+'"]').click();await page.getByRole('button',{name:'暂停任务',exact:true}).waitFor();
+  await page.locator('#jobs').waitFor({state:'hidden'});
   assert.equal(await page.locator('#jobs').isVisible(),false);
   await page.getByRole('button',{name:'暂停任务',exact:true}).click();await page.getByRole('button',{name:'继续处理',exact:true}).waitFor();
   assert.deepEqual(calls,['merge','pause']);assert.deepEqual(errors,[]);
